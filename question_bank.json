@@ -1,0 +1,120 @@
+{
+  "questions": [
+    {
+      "question": "What keyword is used to define a function in Python?",
+      "type": "multiple_choice",
+      "options": ["func", "define", "def", "function"],
+      "answer": "def",
+      "category": "Python Basics",
+      "difficulty": "Easy"
+    },
+    {
+      "question": "A list in Python is immutable.",
+      "type": "true_false",
+      "answer": "false",
+      "category": "Data Structures",
+      "difficulty": "Easy"
+    },
+    {
+      "question": "What built-in function returns the number of items in a list?",
+      "type": "short_answer",
+      "answer": "len",
+      "category": "Python Basics",
+      "difficulty": "Easy"
+    },
+    {
+      "question": "Which of the following data types is mutable in Python?",
+      "type": "multiple_choice",
+      "options": ["tuple", "string", "list", "int"],
+      "answer": "list",
+      "category": "Data Structures",
+      "difficulty": "Medium"
+    },
+    {
+      "question": "What keyword is used to exit a loop completely before it has finished iterating?",
+      "type": "short_answer",
+      "answer": "break",
+      "category": "Loops",
+      "difficulty": "Medium"
+    },
+    {
+      "question": "Which statement is used to handle exceptions in Python?",
+      "type": "multiple_choice",
+      "options": ["catch", "handle", "try", "except"],
+      "answer": "try",
+      "category": "Error Handling",
+      "difficulty": "Easy"
+    },
+    {
+      "question": "A Python dictionary stores key-value pairs.",
+      "type": "true_false",
+      "answer": "true",
+      "category": "Data Structures",
+      "difficulty": "Easy"
+    },
+    {
+      "question": "What loop keyword skips the rest of the current iteration and moves to the next one?",
+      "type": "short_answer",
+      "answer": "continue",
+      "category": "Loops",
+      "difficulty": "Medium"
+    },
+    {
+      "question": "Which list method adds an item to the end of a list?",
+      "type": "multiple_choice",
+      "options": ["append", "add", "insert", "push"],
+      "answer": "append",
+      "category": "Data Structures",
+      "difficulty": "Easy"
+    },
+    {
+      "question": "What value does a function return if it does not explicitly use a return statement?",
+      "type": "short_answer",
+      "answer": "none",
+      "category": "Functions",
+      "difficulty": "Medium"
+    },
+    {
+      "question": "Python uses indentation to define code blocks.",
+      "type": "true_false",
+      "answer": "true",
+      "category": "Python Basics",
+      "difficulty": "Easy"
+    },
+    {
+      "question": "Which built-in data type can only contain unique values?",
+      "type": "multiple_choice",
+      "options": ["list", "tuple", "set", "dict"],
+      "answer": "set",
+      "category": "Data Structures",
+      "difficulty": "Medium"
+    },
+    {
+      "question": "What keyword creates an anonymous function in Python?",
+      "type": "short_answer",
+      "answer": "lambda",
+      "category": "Functions",
+      "difficulty": "Hard"
+    },
+    {
+      "question": "The finally block runs whether or not an exception is raised.",
+      "type": "true_false",
+      "answer": "true",
+      "category": "Error Handling",
+      "difficulty": "Medium"
+    },
+    {
+      "question": "Which of these best describes a Python tuple?",
+      "type": "multiple_choice",
+      "options": [
+        "Mutable sequence",
+        "Immutable sequence",
+        "Key-value mapping",
+        "Loop construct"
+      ],
+      "answer": "Immutable sequence",
+      "category": "Data Structures",
+      "difficulty": "Hard"
+    }
+  ]
+}
