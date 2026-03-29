@@ -7,10 +7,10 @@ import json
 import os
 import random
 import secrets
-import sys
 import textwrap
 import zlib
 from dataclasses import dataclass
+from getpass import getpass
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +19,7 @@ BASE_DIR = Path(__file__).resolve().parent
 QUESTION_BANK_PATH = BASE_DIR / "question_bank.json"
 DATA_DIR = BASE_DIR / ".quiz_data"
 USER_DB_PATH = DATA_DIR / "users.json"
-HISTORY_PATH = DATA_DIR / "history.bin"
-HISTORY_KEY_PATH = DATA_DIR / ".history.key"
+HISTORY_DIR = DATA_DIR / "history"
 
 DIFFICULTY_POINTS = {
     "easy": 5,
@@ -56,6 +55,7 @@ class Question:
 
 def ensure_data_dir() -> None:
     DATA_DIR.mkdir(exist_ok=True)
+    HISTORY_DIR.mkdir(exist_ok=True)
 
 
 def set_private_permissions(path: Path) -> None:
@@ -76,6 +76,9 @@ def load_question_bank() -> list[Question]:
     except json.JSONDecodeError:
         print("Question bank could not be read. Please check that question_bank.json contains valid JSON.")
         raise SystemExit(1)
+    except OSError:
+        print("Question bank could not be opened. Please check file permissions and try again.")
+        raise SystemExit(1)
 
     raw_questions = payload.get("questions", [])
     if not raw_questions:
@@ -83,25 +86,37 @@ def load_question_bank() -> list[Question]:
         raise SystemExit(1)
 
     questions: list[Question] = []
+    invalid_count = 0
     for item in raw_questions:
         try:
             question = Question.from_dict(item)
         except KeyError:
+            invalid_count += 1
             continue
 
         if not question.question or not question.answer or not question.category:
+            invalid_count += 1
             continue
         if question.difficulty not in DIFFICULTY_POINTS:
+            invalid_count += 1
             continue
         if question.question_type not in {"multiple_choice", "true_false", "short_answer"}:
+            invalid_count += 1
             continue
         if question.question_type == "multiple_choice" and len(question.options) < 2:
+            invalid_count += 1
             continue
         questions.append(question)
 
     if not questions:
-        print("Question bank is empty. Please add questions to question_bank.json and try again.")
+        if invalid_count:
+            print("No valid questions were found in question_bank.json. Please fix question formatting and try again.")
+        else:
+            print("Question bank is empty. Please add questions to question_bank.json and try again.")
         raise SystemExit(1)
+
+    if invalid_count:
+        print(f"Skipped {invalid_count} invalid question record(s) from question_bank.json.")
 
     return questions
 
@@ -134,46 +149,71 @@ def verify_password(password: str, salt_b64: str, expected_hash: str) -> bool:
     return hmac.compare_digest(candidate, expected_hash)
 
 
-def get_history_key() -> bytes:
-    ensure_data_dir()
-    if HISTORY_KEY_PATH.exists():
-        return HISTORY_KEY_PATH.read_bytes()
-
-    key = secrets.token_bytes(32)
-    HISTORY_KEY_PATH.write_bytes(key)
-    set_private_permissions(HISTORY_KEY_PATH)
-    return key
-
-
-def xor_encrypt(data: bytes, key: bytes) -> bytes:
+def xor_stream(data: bytes, key: bytes, nonce: bytes) -> bytes:
     output = bytearray()
     counter = 0
     while len(output) < len(data):
-        block = hashlib.sha256(key + counter.to_bytes(8, "big")).digest()
+        block = hashlib.sha256(key + nonce + counter.to_bytes(8, "big")).digest()
         output.extend(block)
         counter += 1
     return bytes(left ^ right for left, right in zip(data, output))
 
 
-def load_history() -> dict[str, Any]:
-    if not HISTORY_PATH.exists():
-        return {"users": {}}
+def history_file_for_user(username: str) -> Path:
+    filename = hashlib.sha256(username.encode("utf-8")).hexdigest() + ".bin"
+    return HISTORY_DIR / filename
+
+
+def derive_history_key(username: str, password: str, salt_b64: str) -> bytes:
+    salt = base64.b64decode(salt_b64.encode("ascii"))
+    context_salt = hashlib.sha256(salt + username.encode("utf-8") + b"quiz-history-v1").digest()
+    return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), context_salt, 250_000, dklen=32)
+
+
+def encrypt_history_payload(payload: bytes, key: bytes) -> bytes:
+    nonce = secrets.token_bytes(16)
+    ciphertext = xor_stream(payload, key, nonce)
+    tag = hmac.new(key, nonce + ciphertext, hashlib.sha256).digest()
+    return b"QH1" + nonce + tag + ciphertext
+
+
+def decrypt_history_payload(blob: bytes, key: bytes) -> bytes:
+    if len(blob) < 51 or not blob.startswith(b"QH1"):
+        raise ValueError("Invalid history payload format")
+
+    nonce = blob[3:19]
+    expected_tag = blob[19:51]
+    ciphertext = blob[51:]
+    actual_tag = hmac.new(key, nonce + ciphertext, hashlib.sha256).digest()
+    if not hmac.compare_digest(actual_tag, expected_tag):
+        raise ValueError("History payload authentication failed")
+    return xor_stream(ciphertext, key, nonce)
+
+
+def load_user_history(username: str, history_key: bytes) -> dict[str, Any]:
+    path = history_file_for_user(username)
+    if not path.exists():
+        return {}
 
     try:
-        encrypted = HISTORY_PATH.read_bytes()
-        plaintext = xor_encrypt(encrypted, get_history_key())
+        blob = path.read_bytes()
+        plaintext = decrypt_history_payload(blob, history_key)
         payload = zlib.decompress(plaintext)
-        return json.loads(payload.decode("utf-8"))
+        parsed = json.loads(payload.decode("utf-8"))
+        if isinstance(parsed, dict):
+            return parsed
     except (OSError, ValueError, json.JSONDecodeError, zlib.error):
-        return {"users": {}}
+        pass
+    return {}
 
 
-def save_history(history: dict[str, Any]) -> None:
+def save_user_history(username: str, history: dict[str, Any], history_key: bytes) -> None:
     ensure_data_dir()
     payload = json.dumps(history, separators=(",", ":")).encode("utf-8")
-    encrypted = xor_encrypt(zlib.compress(payload), get_history_key())
-    HISTORY_PATH.write_bytes(encrypted)
-    set_private_permissions(HISTORY_PATH)
+    encrypted = encrypt_history_payload(zlib.compress(payload), history_key)
+    path = history_file_for_user(username)
+    path.write_bytes(encrypted)
+    set_private_permissions(path)
 
 
 class QuizApp:
@@ -181,11 +221,12 @@ class QuizApp:
         self.questions = load_question_bank()
         ensure_data_dir()
         self.users = load_json_file(USER_DB_PATH, {"users": {}})
-        self.history = load_history()
         self.current_user: str | None = None
+        self.current_history: dict[str, Any] | None = None
+        self.current_history_key: bytes | None = None
 
     def run(self) -> None:
-        print("Welcome to the Python quiz app.")
+        print("Welcome to the 112 Quiz App (Press 'q' to quit at any time).")
         username = self.login_flow()
         self.current_user = username
         print(f"Hello, {username}.")
@@ -207,6 +248,7 @@ class QuizApp:
             if existing_user:
                 password = self.prompt_password("Password: ")
                 if verify_password(password, existing_user["salt"], existing_user["password_hash"]):
+                    self.current_history_key = derive_history_key(username, password, existing_user["salt"])
                     return username
                 print("That password did not match. Please try again.")
                 continue
@@ -225,8 +267,9 @@ class QuizApp:
                 "password_hash": derive_password_hash(password, salt),
             }
             save_json_file(USER_DB_PATH, self.users)
-            self.history.setdefault("users", {}).setdefault(username, self.default_user_history())
-            save_history(self.history)
+            salt_b64 = self.users["users"][username]["salt"]
+            self.current_history_key = derive_history_key(username, password, salt_b64)
+            save_user_history(username, self.default_user_history(), self.current_history_key)
             return username
 
     def default_user_history(self) -> dict[str, Any]:
@@ -245,9 +288,21 @@ class QuizApp:
 
     def get_user_history(self) -> dict[str, Any]:
         assert self.current_user is not None
-        users = self.history.setdefault("users", {})
-        users.setdefault(self.current_user, self.default_user_history())
-        return users[self.current_user]
+        assert self.current_history_key is not None
+
+        if self.current_history is None:
+            loaded = load_user_history(self.current_user, self.current_history_key)
+            if not loaded:
+                loaded = self.default_user_history()
+            self.current_history = loaded
+
+        return self.current_history
+
+    def save_current_user_history(self) -> None:
+        assert self.current_user is not None
+        assert self.current_history_key is not None
+        assert self.current_history is not None
+        save_user_history(self.current_user, self.current_history, self.current_history_key)
 
     def get_round_config(self) -> dict[str, Any] | None:
         categories = sorted({question.category for question in self.questions})
@@ -319,7 +374,7 @@ class QuizApp:
         user_history["correct_answers"] = int(user_history.get("correct_answers", 0)) + correct_answers
         user_history["questions_answered"] = int(user_history.get("questions_answered", 0)) + total_questions
         user_history["high_score"] = max(high_score, score)
-        save_history(self.history)
+        self.save_current_user_history()
 
         play_again = self.prompt_choice("Start a new round? (y/n): ", {"y", "yes", "n", "no"})
         return play_again in {"y", "yes"}
@@ -416,7 +471,7 @@ class QuizApp:
             feedback.setdefault("questions", {})[question_key] = feedback.setdefault("questions", {}).get(question_key, 0) + delta
             feedback.setdefault("categories", {})[question.category] = feedback.setdefault("categories", {}).get(question.category, 0) + delta
             feedback.setdefault("difficulties", {})[question.difficulty] = feedback.setdefault("difficulties", {}).get(question.difficulty, 0) + delta
-            save_history(self.history)
+            self.save_current_user_history()
             return
 
     def question_key(self, question: Question) -> str:
@@ -494,7 +549,18 @@ class QuizApp:
 
     def prompt_password(self, prompt: str) -> str:
         while True:
-            response = self.prompt_input(prompt).strip()
+            try:
+                response = getpass(prompt).strip()
+            except KeyboardInterrupt as exc:
+                print("\nQuiz closed. Goodbye.")
+                raise SystemExit(0) from exc
+
+            if response.lower() == "q":
+                if self.confirm_quit():
+                    print("Quiz closed. Goodbye.")
+                    raise QuitRequested()
+                continue
+
             if response:
                 return response
             print("Please enter a value.")

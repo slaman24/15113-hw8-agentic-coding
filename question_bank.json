@@ -43,7 +43,7 @@
       "options": ["catch", "handle", "try", "except"],
       "answer": "try",
       "category": "Error Handling",
-      "difficulty": "Easy"
+      "difficulty": "Hard"
     },
     {
       "question": "A Python dictionary stores key-value pairs.",
